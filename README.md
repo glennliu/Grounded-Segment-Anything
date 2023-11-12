@@ -1,5 +1,16 @@
 ![](./assets/Grounded-SAM_logo.png)
 
+# Modification notes
+This is a modified version of [RAM-Grounded-SAM](https://github.com/IDEA-Research/Grounded-Segment-Anything). It is modified to run it on an image sequence from SLAM dataset (eg. ScanNet sequence.). The main modifications are,
+- Text prompt augmentation. The recently detected labels are recorded and augmented into the text prompt send to GroundingDINO. 
+- In GroundingDINO, all the grounded phrases are decoded seperatedly into label measurements. The corresponding similarity score for each label are also meaintained. 
+- Program interfaces are provided, such as ```frame_gap```, ```split_file``` etc. 
+
+To segment an image sequence, 
+```
+sh ram_demo_no_aug.sh val val_tmp.txt
+```
+
 # Grounded-Segment-Anything
 [![YouTube](https://badges.aleen42.com/src/youtube.svg)](https://youtu.be/oEQYStnF2l8) [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/roboflow-ai/notebooks/blob/main/notebooks/automated-dataset-annotation-and-evaluation-with-grounding-dino-and-sam.ipynb) [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://github.com/camenduru/grounded-segment-anything-colab) [![HuggingFace Space](https://img.shields.io/badge/🤗-HuggingFace%20Space-cyan.svg)](https://huggingface.co/spaces/IDEA-Research/Grounded-SAM) [![ModelScope Official Demo](https://img.shields.io/badge/ModelScope-Official%20Demo-important)](https://modelscope.cn/studios/tuofeilunhifi/Grounded-Segment-Anything/summary) [![Huggingface Demo by Community](https://img.shields.io/badge/Huggingface-Demo%20by%20Community-red)](https://huggingface.co/spaces/yizhangliu/Grounded-Segment-Anything) [![Stable-Diffusion WebUI](https://img.shields.io/badge/Stable--Diffusion-WebUI%20by%20Community-critical)](https://github.com/continue-revolution/sd-webui-segment-anything) [![Jupyter Notebook Demo](https://img.shields.io/badge/Demo-Jupyter%20Notebook-informational)](./grounded_sam.ipynb)
 
