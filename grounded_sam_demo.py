@@ -52,6 +52,8 @@ def load_model(model_config_path, model_checkpoint_path, device):
 
 
 def get_grounding_output(model, image, caption, box_threshold, text_threshold, with_logits=True, device="cpu"):
+    print('-------get grounding output----------')
+
     caption = caption.lower()
     caption = caption.strip()
     if not caption.endswith("."):
@@ -59,7 +61,7 @@ def get_grounding_output(model, image, caption, box_threshold, text_threshold, w
     model = model.to(device)
     image = image.to(device)
     with torch.no_grad():
-        outputs = model(image[None], captions=[caption])
+        outputs = model(image[None], captions=[caption])    
     logits = outputs["pred_logits"].cpu().sigmoid()[0]  # (nq, 256)
     boxes = outputs["pred_boxes"].cpu()[0]  # (nq, 4)
     logits.shape[0]
@@ -71,20 +73,72 @@ def get_grounding_output(model, image, caption, box_threshold, text_threshold, w
     logits_filt = logits_filt[filt_mask]  # num_filt, 256
     boxes_filt = boxes_filt[filt_mask]  # num_filt, 4
     logits_filt.shape[0]
+    print('{}/{} predicted objects'.format(logits_filt.shape[0], logits.shape[0]))
 
     # get phrase
     tokenlizer = model.tokenizer
-    tokenized = tokenlizer(caption)
+    tokenized = tokenlizer(caption) # {'input_ids': [], 'token_type_ids': [], 'attention_mask': []}
+    print('input caption: {}'.format(caption))
+    # print('token ids: {}'.format(tokenized['input_ids']))
+    # print('{} text tokens'.format(len(tokenized['input_ids'])))
+    # for tkid in tokenized['input_ids']:
+    #     print(tokenlizer.decode(tkid))
+    from GroundingDINO.groundingdino.util.utils import get_grouped_tokens
+    
+    grouped_token_ids, posmap_to_prompt_id = get_grouped_tokens(tokenized['input_ids'], tokenlizer)
+    assert len(grouped_token_ids)+1 == len(caption.split('.'))
+    
     # build pred
     pred_phrases = []
+    scores = []
+    
     for logit, box in zip(logits_filt, boxes_filt):
-        pred_phrase = get_phrases_from_posmap(logit > text_threshold, tokenized, tokenlizer)
+        # box: [x0, y0, x1, y1]
+        # logit: 256
+        posmap     = logit > text_threshold
+        prompt_ids = posmap_to_prompt_id[posmap.nonzero(as_tuple=True)[0]]
+        prompt_ids = torch.unique(prompt_ids)
+        assert prompt_ids.min()>=0 and prompt_ids.max()<len(grouped_token_ids)
+        
+        pred_phrase = ''
+        
+        for prompt_id in prompt_ids:
+            prompt_posmap = grouped_token_ids[prompt_id]
+            prompt_tokens = [tokenized['input_ids'][i] for i in prompt_posmap]
+            pred_label = tokenlizer.decode(prompt_tokens)
+            pred_score = logit[prompt_posmap].max()
+            if logit[prompt_posmap].min()>text_threshold:
+                pred_phrase += pred_label + f"({str(pred_score.item())[:4]})"+ ' '
+            # print('^_^ {}:{:.3f}'.format(pred_label,pred_score))
+        
+        
+        # print(pred_phrase)
+        scores.append(logit.max().item())
+        pred_phrases.append(pred_phrase)
+        
+        continue
+        pred_phrase = get_phrases_from_posmap(posmap, tokenized, tokenlizer)
         if with_logits:
             pred_phrases.append(pred_phrase + f"({str(logit.max().item())[:4]})")
         else:
             pred_phrases.append(pred_phrase)
+        
+        # print('{}:{:.3f}'.format(pred_phrase,logit.max().item()))
+        continue
+        all_posmap = logit>1e-6
 
-    return boxes_filt, pred_phrases
+        if posmap.sum()>1 and len(pred_phrase.split(' '))>1:
+            print('{} has {}/{} valid text token, token ids: {}'.format(
+                pred_phrase,posmap.sum(),all_posmap.sum(),posmap.nonzero(as_tuple=True)[0].tolist()))
+            for i in posmap.nonzero(as_tuple=True)[0].tolist():
+                print('{}:{:.3f}'.format(tokenlizer.decode(tokenized['input_ids'][i]),logit[i]))
+                
+        # print('all tokens')
+        # for j in all_posmap.nonzero(as_tuple=True)[0].tolist():
+        #     print('{}:{:.3f}'.format(tokenlizer.decode(tokenized['input_ids'][j]),logit[j]))
+
+    print('receive pred output')
+    return torch.Tensor(scores), boxes_filt, pred_phrases
 
 def show_mask(mask, ax, random_color=False):
     if random_color:
@@ -100,7 +154,7 @@ def show_box(box, ax, label):
     x0, y0 = box[0], box[1]
     w, h = box[2] - box[0], box[3] - box[1]
     ax.add_patch(plt.Rectangle((x0, y0), w, h, edgecolor='green', facecolor=(0,0,0,0), lw=2)) 
-    ax.text(x0, y0, label)
+    ax.text(x0, y0, label, bbox=dict(facecolor='green', alpha=0.5), fontsize=20, color='white')
 
 
 def save_mask_data(output_dir, mask_list, box_list, label_list):
@@ -112,8 +166,8 @@ def save_mask_data(output_dir, mask_list, box_list, label_list):
     plt.figure(figsize=(10, 10))
     plt.imshow(mask_img.numpy())
     plt.axis('off')
-    plt.savefig(os.path.join(output_dir, 'mask.jpg'), bbox_inches="tight", dpi=300, pad_inches=0.0)
-
+    plt.savefig('{}_mask.jpg'.format(output_dir), bbox_inches="tight", dpi=300, pad_inches=0.0)
+    return None
     json_data = [{
         'value': value,
         'label': 'background'
@@ -121,7 +175,7 @@ def save_mask_data(output_dir, mask_list, box_list, label_list):
     for label, box in zip(label_list, box_list):
         value += 1
         name, logit = label.split('(')
-        logit = logit[:-1] # the last is ')'
+        logit = logit.strip()[:-1] # the last is ')'
         json_data.append({
             'value': value,
             'label': name,
@@ -153,9 +207,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--output_dir", "-o", type=str, default="outputs", required=True, help="output directory"
     )
-
+    parser.add_argument("--frame_gap", type=int, default=1, help="skip frames")
     parser.add_argument("--box_threshold", type=float, default=0.3, help="box threshold")
     parser.add_argument("--text_threshold", type=float, default=0.25, help="text threshold")
+    parser.add_argument("--viz_mask", action="store_true", help="visualize mask")
 
     parser.add_argument("--device", type=str, default="cpu", help="running on cpu only!, default=False")
     args = parser.parse_args()
@@ -166,7 +221,7 @@ if __name__ == "__main__":
     sam_checkpoint = args.sam_checkpoint
     sam_hq_checkpoint = args.sam_hq_checkpoint
     use_sam_hq = args.use_sam_hq
-    image_path = args.input_image
+    input_folder = args.input_image
     text_prompt = args.text_prompt
     output_dir = args.output_dir
     box_threshold = args.box_threshold
@@ -174,59 +229,101 @@ if __name__ == "__main__":
     device = args.device
 
     # make dir
+    import glob, time
     os.makedirs(output_dir, exist_ok=True)
-    # load image
-    image_pil, image = load_image(image_path)
+    if '.jpg' or '.png' in input_folder:
+        imglist = [input_folder]
+    else:
+        imglist = glob.glob(os.path.join(input_folder, '*.jpg'))
+       
     # load model
     model = load_model(config_file, grounded_checkpoint, device=device)
 
     # visualize raw image
-    image_pil.save(os.path.join(output_dir, "raw_image.jpg"))
+    # image_pil.save(os.path.join(output_dir, "raw_image.jpg"))
 
-    # run grounding dino model
-    boxes_filt, pred_phrases = get_grounding_output(
-        model, image, text_prompt, box_threshold, text_threshold, device=device
-    )
 
     # initialize SAM
     if use_sam_hq:
         predictor = SamPredictor(build_sam_hq(checkpoint=sam_hq_checkpoint).to(device))
     else:
         predictor = SamPredictor(build_sam(checkpoint=sam_checkpoint).to(device))
-    image = cv2.imread(image_path)
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    predictor.set_image(image)
+            
+    for id, image_path in enumerate(imglist):
+        if id%args.frame_gap != 0:
+            continue
+        start_t = time.time()
+        
+        img_name = os.path.basename(image_path).split('.')[0]
+        # load image
+        image_pil, image = load_image(image_path)
 
-    size = image_pil.size
-    H, W = size[1], size[0]
-    for i in range(boxes_filt.size(0)):
-        boxes_filt[i] = boxes_filt[i] * torch.Tensor([W, H, W, H])
-        boxes_filt[i][:2] -= boxes_filt[i][2:] / 2
-        boxes_filt[i][2:] += boxes_filt[i][:2]
-
-    boxes_filt = boxes_filt.cpu()
-    transformed_boxes = predictor.transform.apply_boxes_torch(boxes_filt, image.shape[:2]).to(device)
-
-    masks, _, _ = predictor.predict_torch(
-        point_coords = None,
-        point_labels = None,
-        boxes = transformed_boxes.to(device),
-        multimask_output = False,
-    )
+        # run grounding dino model
+        scores, boxes_filt, pred_phrases = get_grounding_output(
+            model, image, text_prompt, box_threshold, text_threshold, device=device
+        )
+        t_dino = time.time() - start_t
+        # continue
     
-    # draw output image
-    plt.figure(figsize=(10, 10))
-    plt.imshow(image)
-    for mask in masks:
-        show_mask(mask.cpu().numpy(), plt.gca(), random_color=True)
-    for box, label in zip(boxes_filt, pred_phrases):
-        show_box(box.numpy(), plt.gca(), label)
+        # SAM
+        image = cv2.imread(image_path)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        predictor.set_image(image)
 
-    plt.axis('off')
-    plt.savefig(
-        os.path.join(output_dir, "grounded_sam_output.jpg"), 
-        bbox_inches="tight", dpi=300, pad_inches=0.0
-    )
+        size = image_pil.size
+        H, W = size[1], size[0]
+        for i in range(boxes_filt.size(0)):
+            boxes_filt[i] = boxes_filt[i] * torch.Tensor([W, H, W, H])
+            boxes_filt[i][:2] -= boxes_filt[i][2:] / 2
+            boxes_filt[i][2:] += boxes_filt[i][:2]
 
-    save_mask_data(output_dir, masks, boxes_filt, pred_phrases)
+        # boxes_filt = boxes_filt.cpu()
+        
+        # Filter overlapped bbox using NMS
+        import torchvision
+        iou_threshold = 0.5
+        boxes_filt = boxes_filt.cpu()
+        tmp_count_bbox = boxes_filt.shape[0]
+        nms_idx = torchvision.ops.nms(boxes_filt, scores, iou_threshold).numpy().tolist()
+        boxes_filt = boxes_filt[nms_idx]
+        pred_phrases = [pred_phrases[idx] for idx in nms_idx]
+        # pred_phrases_unaligned = [pred_phrases_unaligned[idx] for idx in nms_idx]
+        # pred_phrases_set = [pred_phrases_set[idx] for idx in nms_idx]
+        print('After NMS, {}/{} bbox are valid'.format(len(nms_idx), tmp_count_bbox))
+        
+        
+        transformed_boxes = predictor.transform.apply_boxes_torch(boxes_filt, image.shape[:2]).to(device)
+
+        masks, _, _ = predictor.predict_torch(
+            point_coords = None,
+            point_labels = None,
+            boxes = transformed_boxes.to(device),
+            multimask_output = False,
+        )
+        t_sam = time.time() - start_t - t_dino
+        
+        # draw output image
+        plt.figure(figsize=(10, 10))
+        plt.imshow(image)
+        if args.viz_mask:
+            for mask in masks:
+                show_mask(mask.cpu().numpy(), plt.gca(), random_color=True)
+                
+        for box, label in zip(boxes_filt, pred_phrases):
+            concat_label = '{} {}'.format(label,pred_phrases[-1])
+            show_box(box.numpy(), plt.gca(), label)
+            print(label)
+            # break
+
+        plt.axis('off')
+        plt.savefig(
+            os.path.join(output_dir, "{}.jpg".format(img_name)), 
+            bbox_inches="tight", dpi=300, pad_inches=0.0
+        )
+
+        duration = time.time() - start_t
+        print("dino: {:.2f}s, sam: {:.2f}s, total: {:.2f}s".format(t_dino,t_sam,duration))
+        
+        # save_mask_data(os.path.join(output_dir,img_name), masks, boxes_filt, pred_phrases)
+        break
 

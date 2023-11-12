@@ -606,3 +606,40 @@ def get_phrases_from_posmap(
         return tokenizer.decode(token_ids)
     else:
         raise NotImplementedError("posmap must be 1-dim")
+
+def get_grouped_tokens(
+    token_ids: List, tokenizer: AutoTokenizer
+):
+    '''
+        Args:
+            - token_ids: tensor, token ids
+            - tokenizer: AutoTokenizer
+        Returns:
+            - grouped_tokens: list of prompt's posmpap
+            - posmap_to_prompt_id: tensor, map from posmap to prompt id
+    '''
+    Nt = 256
+    grouped_tokens = [] # list of posmap
+    posmap_to_prompt_id = torch.zeros(Nt, dtype=torch.long)
+    word_posmap = []
+    
+    word_id = 0
+    for pos_id, token_id in enumerate(token_ids[1:-1]):
+        assert pos_id<Nt, 'token id must be less than 256'
+        text = tokenizer.decode(token_id)
+        
+        if text =='.':
+            grouped_tokens.append(word_posmap)
+            word_posmap = []
+            word_id +=1
+        else:
+            word_posmap.append(pos_id+1)
+            posmap_to_prompt_id[pos_id+1] = word_id
+    
+    return grouped_tokens, posmap_to_prompt_id
+
+    print('verify grouped_tokens')
+    for posmap in grouped_tokens:
+        tokens = [token_ids[i] for i in posmap]
+        print(tokenizer.decode(tokens))
+    # print(posmap_to_prompt_id)

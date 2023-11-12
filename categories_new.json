@@ -1,0 +1,94 @@
+{
+    "note":"Map the nyu object name to a list of openset objects.",
+    "objects":{
+        "wall":{
+            "main":["wall","tile wall"],
+            "other":[]
+        },
+        "floor":{
+            "main":["floor","carpet"],
+            "other":[]
+        },
+        "cabinet":{
+            "main":["cabinet","cupboard","wardrobe","file cabinet","closet"],
+            "other":[]
+        },
+        "bed":{
+            "main":["bed","infant bed"],
+            "other":[]
+        },
+        "chair":{
+            "main": ["chair","swivel chair","armchair"],
+            "other":[]
+        },        
+        "sofa":{
+            "main":["couch","sofa"],
+            "other":[]
+        },
+        "table":{
+            "main":["table","side table","round table","kitchen table","dinning table"],
+            "other":[]
+        },
+        "door":{
+            "main":["door","glass door"],
+            "other":[]
+        },
+        "window":{
+            "main":["window","kitchen window"],
+            "other":[]
+        },
+        "bookshelf":{
+            "main":["bookshelf","shelf"],
+            "other":[]
+        },        
+        "picture":{
+            "main":["picture","poster","picture frame"],
+            "other":[]
+        },
+        "counter":{
+            "main":["counter","counter top","kitchen counter"],
+            "other":[]
+        },
+        "desk":{
+            "main":["desk","computer desk","office desk"],
+            "other":[]
+        },
+        "curtain":{
+            "main":["curtain"],
+            "other":[]
+        },
+        "refrigerator":{
+            "main":["fridge","refrigerator"],
+            "other":[]
+        },
+        "shower curtain":{
+            "main":["shower curtain"],
+            "composite":[
+                ["bathroom","curtain"],
+                ["shower","curtain"],
+                ["bath","curtain"]
+            ]
+        },
+        "toilet":{
+            "main":["toilet","toilet bowl","urinal"],
+            "other":[]
+        },
+        "sink":{
+            "main":["sink","bathroom sink"],
+            "other":[]
+        },
+        "bathtub":{
+            "main":["bathtub","bath","tub"],
+            "other":[]
+        },
+        "otherfurniture":{
+            "main":["bin"],
+            "other":[]
+        },
+        "unknown":{
+            "main":["television","computer monitor","printer","pillar","stairs","elevator"],
+            "other":[]
+        }
+
+    }
+}
