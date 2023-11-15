@@ -282,11 +282,8 @@ def save_mask_data(output_dir,frame_name, raw_tags, tags, mask_list, box_list, l
     for idx, mask in enumerate(mask_list):
         mask_img[idx,mask.cpu().numpy()[0] == True] = 1 #value + idx + 1
     np.save(os.path.join(output_dir, '{}_mask.npy'.format(frame_name)), mask_img.numpy())
-    # plt.figure(figsize=(10, 10))
-    # plt.imshow(mask_img.numpy())
-    # plt.axis('off')
-    # plt.savefig(os.path.join(output_dir, '{}_mask.jpg'.format(frame_name)), bbox_inches="tight", dpi=300, pad_inches=0.0)
-
+    
+    mask_instances_img = np.zeros((mask_list.shape[-2],mask_list.shape[-1]),np.uint8) # (H, W)
     json_data = {
         'raw_tags':raw_tags,
         'tags': tags,
@@ -295,20 +292,18 @@ def save_mask_data(output_dir,frame_name, raw_tags, tags, mask_list, box_list, l
             'label': 'background'
         }]
     }
-    for token_map, box in zip(label_list, box_list):
+    for token_map, box, mask in zip(label_list,box_list,mask_list):
         value += 1
-        # name, logit = label.split('(')
-        # if name not in label_mapper:
-        #     continue
-        # else: name = label_mapper[name]
-        
-        # logit = logit[:-1] # the last is ')'
         json_data['mask'].append({
             'value': value,
             'labels': token_map,
             # 'logit': float(logit),
             'box': box.numpy().tolist(),
         })
+        if value>0:
+            mask_instances_img[mask.cpu().numpy()[0] == True] = value
+    cv2.imwrite(os.path.join(output_dir, '{}_mask.png'.format(frame_name)), mask_instances_img)
+    
     with open(os.path.join(output_dir, '{}_label.json'.format(frame_name)), 'w') as f:
         json.dump(json_data, f)
 
