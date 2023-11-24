@@ -275,13 +275,14 @@ def add_prev_prompts(prev_prompts, tags, invalid_augment_opensets):
     return augmented_tags    
     
 
-def save_mask_data(output_dir,frame_name, raw_tags, tags, mask_list, box_list, label_list, label_mapper):
+def save_mask_data(output_dir,frame_name, raw_tags, tags, mask_list, box_list, label_list, label_mapper, save_np=False):
     value = 0  # 0 for background
 
-    mask_img = torch.zeros((len(mask_list),mask_list.shape[-2],mask_list.shape[-1])) # (K, H, W)
-    for idx, mask in enumerate(mask_list):
-        mask_img[idx,mask.cpu().numpy()[0] == True] = 1 #value + idx + 1
-    np.save(os.path.join(output_dir, '{}_mask.npy'.format(frame_name)), mask_img.numpy())
+    if save_np:
+        mask_img = torch.zeros((len(mask_list),mask_list.shape[-2],mask_list.shape[-1])) # (K, H, W)
+        for idx, mask in enumerate(mask_list):
+            mask_img[idx,mask.cpu().numpy()[0] == True] = 1 #value + idx + 1
+        np.save(os.path.join(output_dir, '{}_mask.npy'.format(frame_name)), mask_img.numpy())
     
     mask_instances_img = np.zeros((mask_list.shape[-2],mask_list.shape[-1]),np.uint8) # (H, W)
     json_data = {
@@ -412,7 +413,7 @@ if __name__ == "__main__":
     print('tag mode: {}'.format(args.tag_mode))    
 
     import check_category
-    category_file = '/home/cliuci/code_ws/Grounded-Segment-Anything/categories_new.json'
+    category_file = 'categories_new.json'
     root_category, mapper, composite_mapper = check_category.read_category(category_file)
     
     # cfg
