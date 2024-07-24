@@ -4,9 +4,9 @@ import supervision as sv
 
 import torch
 import torchvision
+from torchvision.transforms import ToTensor
 
 from groundingdino.util.inference import Model
-from segment_anything import sam_model_registry, SamPredictor
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -14,22 +14,17 @@ DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 GROUNDING_DINO_CONFIG_PATH = "GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py"
 GROUNDING_DINO_CHECKPOINT_PATH = "./groundingdino_swint_ogc.pth"
 
-# Segment-Anything checkpoint
-SAM_ENCODER_VERSION = "vit_h"
-SAM_CHECKPOINT_PATH = "./sam_vit_h_4b8939.pth"
-
 # Building GroundingDINO inference model
 grounding_dino_model = Model(model_config_path=GROUNDING_DINO_CONFIG_PATH, model_checkpoint_path=GROUNDING_DINO_CHECKPOINT_PATH)
 
-# Building SAM Model and SAM Predictor
-sam = sam_model_registry[SAM_ENCODER_VERSION](checkpoint=SAM_CHECKPOINT_PATH)
-sam.to(device=DEVICE)
-sam_predictor = SamPredictor(sam)
+# Building MobileSAM predictor
+EFFICIENT_SAM_CHECHPOINT_PATH = "./EfficientSAM/efficientsam_s_gpu.jit"
+efficientsam = torch.jit.load(EFFICIENT_SAM_CHECHPOINT_PATH)
 
 
 # Predict classes and hyper-param for GroundingDINO
-SOURCE_IMAGE_PATH = "./assets/demo2.jpg"
-CLASSES = ["The running dog"]
+SOURCE_IMAGE_PATH = "./EfficientSAM/LightHQSAM/example_light_hqsam.png"
+CLASSES = ["bench"]
 BOX_THRESHOLD = 0.25
 TEXT_THRESHOLD = 0.25
 NMS_THRESHOLD = 0.8
@@ -55,7 +50,7 @@ labels = [
 annotated_frame = box_annotator.annotate(scene=image.copy(), detections=detections, labels=labels)
 
 # save the annotated grounding dino image
-cv2.imwrite("groundingdino_annotated_image.jpg", annotated_frame)
+cv2.imwrite("EfficientSAM/LightHQSAM/groundingdino_annotated_image.jpg", annotated_frame)
 
 
 # NMS post process
@@ -72,26 +67,42 @@ detections.class_id = detections.class_id[nms_idx]
 
 print(f"After NMS: {len(detections.xyxy)} boxes")
 
-# Prompting SAM with detected boxes
-def segment(sam_predictor: SamPredictor, image: np.ndarray, xyxy: np.ndarray) -> np.ndarray:
-    sam_predictor.set_image(image)
-    result_masks = []
-    for box in xyxy:
-        masks, scores, logits = sam_predictor.predict(
-            box=box,
-            multimask_output=True
-        )
-        index = np.argmax(scores)
-        result_masks.append(masks[index])
-    return np.array(result_masks)
+
+def efficient_sam_box_prompt_segment(image, pts_sampled, model):
+    bbox = torch.reshape(torch.tensor(pts_sampled), [1, 1, 2, 2])
+    bbox_labels = torch.reshape(torch.tensor([2, 3]), [1, 1, 2])
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    img_tensor = ToTensor()(image)
+
+    predicted_logits, predicted_iou = model(
+        img_tensor[None, ...].cuda(),
+        bbox.cuda(),
+        bbox_labels.cuda(),
+    )
+    predicted_logits = predicted_logits.cpu()
+    all_masks = torch.ge(torch.sigmoid(predicted_logits[0, 0, :, :, :]), 0.5).numpy()
+    predicted_iou = predicted_iou[0, 0, ...].cpu().detach().numpy()
+
+    max_predicted_iou = -1
+    selected_mask_using_predicted_iou = None
+    for m in range(all_masks.shape[0]):
+        curr_predicted_iou = predicted_iou[m]
+        if (
+            curr_predicted_iou > max_predicted_iou
+            or selected_mask_using_predicted_iou is None
+        ):
+            max_predicted_iou = curr_predicted_iou
+            selected_mask_using_predicted_iou = all_masks[m]
+    return selected_mask_using_predicted_iou
 
 
-# convert detections to masks
-detections.mask = segment(
-    sam_predictor=sam_predictor,
-    image=cv2.cvtColor(image, cv2.COLOR_BGR2RGB),
-    xyxy=detections.xyxy
-)
+# collect segment results from EfficientSAM
+result_masks = []
+for box in detections.xyxy:
+    mask = efficient_sam_box_prompt_segment(image, box, efficientsam)
+    result_masks.append(mask)
+
+detections.mask = np.array(result_masks)
 
 # annotate image with detections
 box_annotator = sv.BoxAnnotator()
@@ -104,4 +115,4 @@ annotated_image = mask_annotator.annotate(scene=image.copy(), detections=detecti
 annotated_image = box_annotator.annotate(scene=annotated_image, detections=detections, labels=labels)
 
 # save the annotated grounded-sam image
-cv2.imwrite("grounded_sam_annotated_image.jpg", annotated_image)
+cv2.imwrite("EfficientSAM/gronded_efficient_sam_anontated_image.jpg", annotated_image)

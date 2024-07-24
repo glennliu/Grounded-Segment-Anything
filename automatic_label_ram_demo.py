@@ -1,31 +1,33 @@
 import argparse
 import os
-import copy
+import time, glob
 
 import numpy as np
 import json
 import torch
 import torchvision
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
+import litellm
 
 # Grounding DINO
 import GroundingDINO.groundingdino.datasets.transforms as T
 from GroundingDINO.groundingdino.models import build_model
-from GroundingDINO.groundingdino.util import box_ops
 from GroundingDINO.groundingdino.util.slconfig import SLConfig
 from GroundingDINO.groundingdino.util.utils import clean_state_dict, get_phrases_from_posmap, get_grouped_tokens
 
 # segment anything
-from segment_anything import build_sam, SamPredictor 
+from segment_anything import (
+    build_sam,
+    build_sam_hq,
+    SamPredictor
+) 
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 
 # Recognize Anything Model & Tag2Text
-import sys
-sys.path.append('Tag2Text')
-from Tag2Text.models import tag2text
-from Tag2Text import inference_ram
+from ram.models import ram
+from ram import inference_ram
 import torchvision.transforms as TS
 
 # ChatGPT or nltk is required when using tags_chineses
@@ -47,40 +49,6 @@ def load_image(image_path):
     return image_pil, image
 
 
-def generate_tags_chinese(raw_image, device):
-    # unconditional image tags_chineseing
-    if device == "cuda":
-        inputs = processor(raw_image, return_tensors="pt").to("cuda", torch.float16)
-    else:
-        inputs = processor(raw_image, return_tensors="pt")
-    out = blip_model.generate(**inputs)
-    tags_chinese = processor.decode(out[0], skip_special_tokens=True)
-    return tags_chinese
-
-
-def generate_tags(tags_chinese, split=',', max_tokens=100, model="gpt-3.5-turbo"):
-    lemma = nltk.wordnet.WordNetLemmatizer()
-    if openai_key:
-        prompt = [
-            {
-                'role': 'system',
-                'content': 'Extract the unique nouns in the tags_chinese. Remove all the adjectives. ' + \
-                           f'List the nouns in singular form. Split them by "{split} ". ' + \
-                           f'tags_chinese: {tags_chinese}.'
-            }
-        ]
-        response = openai.ChatCompletion.create(model=model, messages=prompt, temperature=0.6, max_tokens=max_tokens)
-        reply = response['choices'][0]['message']['content']
-        # sometimes return with "noun: xxx, xxx, xxx"
-        tags = reply.split(':')[-1].strip()
-    else:
-        nltk.download(['punkt', 'averaged_perceptron_tagger', 'wordnet'])
-        tags_list = [word for (word, pos) in nltk.pos_tag(nltk.word_tokenize(tags_chinese)) if pos[0] == 'N']
-        tags_lemma = [lemma.lemmatize(w) for w in tags_list]
-        tags = ', '.join(map(str, tags_lemma))
-    return tags
-
-
 def check_tags_chinese(tags_chinese, pred_phrases, max_tokens=100, model="gpt-3.5-turbo"):
     object_list = [obj.split('(')[0] for obj in pred_phrases]
     object_num = []
@@ -99,7 +67,7 @@ def check_tags_chinese(tags_chinese, pred_phrases, max_tokens=100, model="gpt-3.
                            'Only give the revised tags_chinese: '
             }
         ]
-        response = openai.ChatCompletion.create(model=model, messages=prompt, temperature=0.6, max_tokens=max_tokens)
+        response = litellm.completion(model=model, messages=prompt, temperature=0.6, max_tokens=max_tokens)
         reply = response['choices'][0]['message']['content']
         # sometimes return with "tags_chinese: xxx, xxx, xxx"
         tags_chinese = reply.split(':')[-1].strip()
@@ -275,16 +243,8 @@ def add_prev_prompts(prev_prompts, tags, invalid_augment_opensets):
     return augmented_tags    
     
 
-def save_mask_data(output_dir,frame_name, raw_tags, tags, mask_list, box_list, label_list, label_mapper, save_np=False):
+def save_mask_data(output_dir,frame_name, raw_tags, tags, box_list, label_list,mask_list, save_np=False):
     value = 0  # 0 for background
-
-    if save_np:
-        mask_img = torch.zeros((len(mask_list),mask_list.shape[-2],mask_list.shape[-1])) # (K, H, W)
-        for idx, mask in enumerate(mask_list):
-            mask_img[idx,mask.cpu().numpy()[0] == True] = 1 #value + idx + 1
-        np.save(os.path.join(output_dir, '{}_mask.npy'.format(frame_name)), mask_img.numpy())
-    
-    mask_instances_img = np.zeros((mask_list.shape[-2],mask_list.shape[-1]),np.uint8) # (H, W)
     json_data = {
         'raw_tags':raw_tags,
         'tags': tags,
@@ -293,20 +253,30 @@ def save_mask_data(output_dir,frame_name, raw_tags, tags, mask_list, box_list, l
             'label': 'background'
         }]
     }
-    for token_map, box, mask in zip(label_list,box_list,mask_list):
+    for token_map, box in zip(label_list,box_list):
         value += 1
         json_data['mask'].append({
             'value': value,
             'labels': token_map,
-            # 'logit': float(logit),
             'box': box.numpy().tolist(),
         })
-        if value>0:
-            mask_instances_img[mask.cpu().numpy()[0] == True] = value
+    with open(os.path.join(output_dir, '{}_label.json'.format(frame_name)), 'w') as f:
+        json.dump(json_data, f)      
+    
+    if mask_list is None: return
+    if save_np:
+        mask_img = torch.zeros((len(mask_list),mask_list.shape[-2],mask_list.shape[-1])) # (K, H, W)
+        for idx, mask in enumerate(mask_list):
+            mask_img[idx,mask.cpu().numpy()[0] == True] = 1 #value + idx + 1
+        np.save(os.path.join(output_dir, '{}_mask.npy'.format(frame_name)), mask_img.numpy())
+    
+    mask_instances_img = np.zeros((mask_list.shape[-2],mask_list.shape[-1]),np.uint8) # (H, W)
+    for mask_id, mask in enumerate(mask_list):
+        # if value>0:
+        mask_instances_img[mask.cpu().numpy()[0] == True] = mask_id + 1
+        
     cv2.imwrite(os.path.join(output_dir, '{}_mask.png'.format(frame_name)), mask_instances_img)
     
-    with open(os.path.join(output_dir, '{}_label.json'.format(frame_name)), 'w') as f:
-        json.dump(json_data, f)
 
 def read_tags_jsonfile(dir):
     tags = []
@@ -318,7 +288,7 @@ def read_tags_jsonfile(dir):
                     tags.append(name)
         return tags
 
-def convert_tags(tags,mapper, composite_mapper):
+def convert_tags(tags,valid_openset_names):
     valid_tags = ''
     valid_tag_list = []
     tag_list = []
@@ -328,13 +298,9 @@ def convert_tags(tags,mapper, composite_mapper):
 
     # select valid tags
     for tag in tag_list:        
-        if tag in mapper and tag not in valid_tag_list: #valid_tags.find(mapper[tag]) == -1:
+        if tag in valid_openset_names and tag not in valid_tag_list:
             valid_tags += tag + '. '
             valid_tag_list.append(tag)
-        continue
-        if tag in composite_mapper and composite_mapper[tag][0] in tag_list:
-                valid_tags += composite_mapper[tag][1] + '. '
-                valid_tag_list.append(composite_mapper[tag][1])
             
     return valid_tags[:-2]
 
@@ -386,10 +352,17 @@ if __name__ == "__main__":
     parser.add_argument(
         "--sam_checkpoint", type=str, required=True, help="path to checkpoint file"
     )
+    parser.add_argument("--run_sam", action="store_true", help="run sam")
     parser.add_argument("--dataroot", type=str, required=True, help="path to data root")
     parser.add_argument("--split_file", type=str, help="name of the split file")
-    # parser.add_argument("--input_image", type=str, required=True, help="path to image file")
     parser.add_argument("--split", required=True, type=str, help="split for text prompt")
+    parser.add_argument(
+        "--sam_hq_checkpoint", type=str, default=None, help="path to sam-hq checkpoint file"
+    )
+    parser.add_argument(
+        "--use_sam_hq", action="store_true", help="using sam-hq for prediction"
+    )
+    # parser.add_argument("--input_image", type=str, required=True, help="path to image file")
     parser.add_argument("--openai_key", type=str, help="key for chatgpt")
     parser.add_argument("--openai_proxy", default=None, type=str, help="proxy for chatgpt")
     # parser.add_argument(
@@ -408,13 +381,14 @@ if __name__ == "__main__":
 
     parser.add_argument("--device", type=str, default="cpu", help="running on cpu only!, default=False")
     parser.add_argument("--dataset",type=str, default='scannet', help="scannet or tum")
+    parser.add_argument("--save_viz",action='store_true', help="save visualization")
     
     args = parser.parse_args()
     print('tag mode: {}'.format(args.tag_mode))    
 
     import check_category
     category_file = 'categories_new.json'
-    root_category, mapper, composite_mapper = check_category.read_category(category_file)
+    _, mapper, _ = check_category.read_category(category_file)
     
     # cfg
     config_file = args.config  # change the path of the model config file
@@ -424,6 +398,9 @@ if __name__ == "__main__":
     # input_folder = args.input_image
     dataroot = args.dataroot
     split_file = args.split_file
+    sam_hq_checkpoint = args.sam_hq_checkpoint
+    use_sam_hq = args.use_sam_hq
+    # image_path = args.input_image
     openai_key = args.openai_key
     split = args.split
     openai_proxy = args.openai_proxy
@@ -436,46 +413,41 @@ if __name__ == "__main__":
     if args.dataset == 'scannet':
         RGB_FOLDER_NAME = 'color'
         RGB_POSFIX = '.jpg'
+    elif args.dataset =='bim':
+        RGB_FOLDER_NAME = 'color'
+        RGB_POSFIX = '.jpg'
     elif args.dataset =='fusionportable':
         RGB_FOLDER_NAME = 'color'
         RGB_POSFIX = '.png'
+    elif args.dataset =='rio':
+        RGB_FOLDER_NAME = 'color'
+        RGB_POSFIX = '.jpg'
     elif args.dataset == 'tum' or args.dataset=='realsense':
         RGB_FOLDER_NAME = 'rgb'
         RGB_POSFIX = '.png'
     elif args.dataset =='scenenn':
         RGB_FOLDER_NAME ='image'
         RGB_POSFIX = '.png'
+    elif args.dataset =='matterport':
+        RGB_FOLDER_NAME = 'color'
+        RGB_POSFIX = '.jpg'
+        split = 'v1/scans'
     else:
         raise NotImplementedError
     
     # PRESET_VALID_AUGMENTATION = ['wall','tile wall','cabinet','door','bookshelf','shelf','fridge']
     invalid_augment_opensets = ['floor','carpet','door','glass door','window','fridge','refrigerator']
-    # for os_name, nyu_name in mapper.items():
-    #     if nyu_name in PRESET_VALID_AUGMENTATION:
-    #         valid_augment_opensets.append(os_name)
-    print('invalid augment opensets: {}'.format(invalid_augment_opensets))
-    # exit(0)
+    print('These labels are not added into the prompt augmentation: {}'.format(invalid_augment_opensets))
     
     AUGMENT_WINDOW_SIZE = 5
     print('dataset:{}, split:{}, scan file:{}'.format(args.dataset,split, split_file))
-    # exit(0)
     
-    import time, glob
-    
-    # ChatGPT or nltk is required when using tags_chineses
-    # openai.api_key = openai_key
-    # if openai_proxy:
-        # openai.proxy = {"http": openai_proxy, "https": openai_proxy}
-
-    # make dir
-    # os.makedirs(output_dir, exist_ok=True)
-
-    # load model
-    model = load_model(config_file, grounded_checkpoint, device=device)
-
-    # visualize raw image
-    # image_pil.save(os.path.join(output_dir, "raw_image.jpg"))
-
+    # load ram model
+    ram_model = ram(pretrained=ram_checkpoint,
+                                        image_size=384,
+                                        vit='swin_l')
+    ram_model.eval()
+    ram_model = ram_model.to(device)
     # initialize Recognize Anything Model
     normalize = TS.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
@@ -483,17 +455,13 @@ if __name__ == "__main__":
                     TS.Resize((384, 384)),
                     TS.ToTensor(), normalize
                 ])
-    # initialize SAM
-    predictor = SamPredictor(build_sam(checkpoint=sam_checkpoint).to(device))
     
-    # load ram
-    ram_model = tag2text.ram(pretrained=ram_checkpoint,
-                                        image_size=384,
-                                        vit='swin_l')
-    # threshold for tagging
-    # we reduce the threshold to obtain more tags
-    ram_model.eval()
-    ram_model = ram_model.to(device)
+    # load grounding-dino
+    model = load_model(config_file, grounded_checkpoint, device=device)
+    
+    # initialize SAM
+    if args.run_sam:
+        predictor = SamPredictor(build_sam(checkpoint=sam_checkpoint).to(device))
 
     # Dataset
     if split_file==None:
@@ -504,9 +472,7 @@ if __name__ == "__main__":
         scans = read_scans(os.path.join(dataroot,'splits', split_file + '.txt'))
         print('find {} scans'.format(len(scans)))
     # exit(0)
-    # scans = ['scene0329_00']
     # scans = ['scene0277_00','scene0670_01'] # ['scene0552_00','scene0334_00']
-    # scans = ['255']
     
     ram_time = []
     dino_time = []
@@ -515,15 +481,15 @@ if __name__ == "__main__":
     frame_numer = 0
     
     for scan in scans:
-        scene_dir = os.path.join(dataroot,split, scan)
+        if args.dataset=='rio':
+            scene_dir = os.path.join(dataroot, scan)
+        else:    
+           scene_dir = os.path.join(dataroot,split, scan)
         input_folder = os.path.join(scene_dir, RGB_FOLDER_NAME)
         imglist = glob.glob(os.path.join(input_folder, '*{}'.format(RGB_POSFIX)))
-        if args.reverse_prediction:
-            imglist = sorted(imglist, reverse=True)
-            output_dir = os.path.join(scene_dir, 'prediction_backward')
-        else: 
-            imglist = sorted(imglist)
-            output_dir = os.path.join(scene_dir, 'prediction_vaug5')
+        imglist = sorted(imglist)
+        output_dir = os.path.join(scene_dir, 'prediction_vaug5')
+        
         if args.augment_off:
             output_dir = os.path.join(scene_dir, 'prediction_no_augment')
         if args.unaligned_phrases:
@@ -531,8 +497,8 @@ if __name__ == "__main__":
 
         if os.path.exists(output_dir)==False:
             os.makedirs(output_dir)
-        print(input_folder)
-        print(RGB_POSFIX)
+            
+        print('rgb folder: ', input_folder)
         print('---------- Run {}, {} imgs ----------'.format(scan, len(imglist)))
         prev_detected_prompts = []
         future_detected_prompts = [] # used in reverse prediction
@@ -540,8 +506,8 @@ if __name__ == "__main__":
         # load image
         for i, image_path in enumerate(imglist):
             img_name = image_path.split('/')[-1][:-4]
-            if args.dataset =='scannet':
-                frame_idx = int(img_name.split('-')[-1])
+            if args.dataset =='scannet' or args.dataset=='rio' or args.dataset=='bim':
+                frame_idx = int(img_name.split('-')[-1][:6])
             elif args.dataset =='fusionportable':
                 frame_idx = int(img_name.split('.')[0])
             elif args.dataset == 'tum': # tum
@@ -550,6 +516,8 @@ if __name__ == "__main__":
             elif args.dataset == 'scenenn':
                 frame_idx = int(img_name[-5:])
             elif args.dataset =='realsense':
+                frame_idx = i
+            elif args.dataset =='matterport':
                 frame_idx = i
             else:
                 raise NotImplementedError
@@ -568,39 +536,32 @@ if __name__ == "__main__":
             image_pil, image = load_image(image_path)
 
             # run ram
-            raw_image = image_pil.resize(
-                            (384, 384))
+            raw_image = image_pil.resize((384, 384))
             raw_image  = transform(raw_image).unsqueeze(0).to(device)
             
             t_start = time.time()
-            res = inference_ram.inference(raw_image , ram_model) #[tags, tags_chinese]
+            res = inference_ram(raw_image,ram_model)
+            # res = inference_ram.inference(raw_image , ram_model) #[tags, tags_chinese]
             t_ram = time.time() - t_start
             
             # Process tags
             ram_tags=res[0].replace(' |', '.')
             if args.tag_mode=='proposed':
-                valid_tags = convert_tags(ram_tags, mapper, composite_mapper)
+                valid_tags = convert_tags(ram_tags, mapper)
             elif args.tag_mode=='raw':
                 valid_tags = ram_tags
             # elif args.tag_mode =='close_set':
             #     valid_tags = convert2_baseline_tags(ram_tags, mapper)
             else:
                 raise NotImplementedError
-                
+            
+            print('raw tags: ', ram_tags)
             print("valid Tags: ", valid_tags)
             if args.augment_off==False:
                 for prev_tag in reversed(prev_detected_prompts):
                     if abs(frame_idx - prev_tag['frame'])>AUGMENT_WINDOW_SIZE: break
                     valid_tags = add_prev_prompts(prev_tag['good_prompts'],valid_tags, invalid_augment_opensets)
-
-                if args.reverse_prediction:
-                    debug_tmp = []
-                    for future_tag in reversed(future_detected_prompts):
-                        if abs(frame_idx - future_tag['frame'])>AUGMENT_WINDOW_SIZE: break
-                        valid_tags = add_prev_prompts(future_tag['good_prompts'],valid_tags, invalid_augment_opensets)    
-                        debug_tmp.append(future_tag['frame'])
-                    print('add future tags: {}'.format(debug_tmp))
-                print('aug   Tags:{}'.format(valid_tags))
+                print('aug Tags:{}'.format(valid_tags))
             else:
                 print('propmts augmentation is off!')
 
@@ -617,12 +578,6 @@ if __name__ == "__main__":
             if boxes_filt.size(0) == 0:
                 continue
                 
-            # continue
-            # run SAM
-            image = cv2.imread(image_path)
-            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            predictor.set_image(image)
-
             size = image_pil.size
             H, W = size[1], size[0]
             for i in range(boxes_filt.size(0)):
@@ -630,27 +585,6 @@ if __name__ == "__main__":
                 boxes_filt[i][:2] -= boxes_filt[i][2:] / 2 # topleft
                 boxes_filt[i][2:] += boxes_filt[i][:2] # bottomright
 
-            # Check and merge overlapped boxes
-            # merge_pairs = {}
-            # for i in range(boxes_filt.size(0)-1):
-            #     for j in range(i+1,boxes_filt.size(0)):
-            #         iou = torchvision.ops.box_iou(boxes_filt[i].unsqueeze(0), boxes_filt[j].unsqueeze(0))
-            #         # print('iou:{}'.format(iou))
-            #         if iou>0.98:
-            #             if i not in merge_pairs:
-            #                 merge_pairs[j] = i
-            #             else: merge_pairs[j] = merge_pairs[i]
-            # for child_id, parent_id in merge_pairs.items():
-            #     for oslabel, score in pred_phrases_set[child_id].items():
-            #         if oslabel not in pred_phrases_set[parent_id]:
-            #             pred_phrases_set[parent_id][oslabel] = score
-            
-            # boxes_filt = boxes_filt[[i for i in range(boxes_filt.size(0)) if i not in merge_pairs]]
-            # pred_phrases_set = [pred_phrases_set[i] for i in range(len(pred_phrases_set)) if i not in merge_pairs]
-            # scores = scores[[i for i in range(scores.size(0)) if i not in merge_pairs]]
-            # if len(merge_pairs)>0:
-            #     print('[TOCHECK!] {}/{} child boxes are merged'.format(len(merge_pairs), boxes_filt.size(0)+len(merge_pairs)))
-        
             # Reduce the score of door be covered by [cabinet, closet, fridge]
             for i, door_token_map in enumerate(pred_phrases_set):
                 if 'door' in door_token_map:
@@ -670,12 +604,10 @@ if __name__ == "__main__":
             tmp_count_bbox = boxes_filt.shape[0]
             nms_idx = torchvision.ops.nms(boxes_filt, scores, iou_threshold).numpy().tolist()
             boxes_filt = boxes_filt[nms_idx]
-            pred_phrases_unaligned = [pred_phrases_unaligned[idx] for idx in nms_idx]
             pred_phrases_set = [pred_phrases_set[idx] for idx in nms_idx]
             print('After NMS, {}/{} bbox are valid'.format(len(nms_idx), tmp_count_bbox))
-            # print(f"After NMS: {boxes_filt.shape[0]} boxes")
-            # tags_chinese = check_tags_chinese(tags_chinese, pred_phrases)
-            # print(f"Revise tags_chinese with number: {tags_chinese}")
+            if boxes_filt.size(0) < 1:
+                continue
 
             # Filter out boxes too large
             size_idx = []
@@ -683,85 +615,77 @@ if __name__ == "__main__":
                 box_width = (boxes_filt[i][2] - boxes_filt[i][0])/W
                 box_height = (boxes_filt[i][3] - boxes_filt[i][1])/H
                     
-                if box_width>0.95 and box_height>0.95:
+                if box_width>0.9 and box_height>0.9:
                     # print('filter too large bbox {}'.format(list(pred_phrases_set[i].keys())[0]))
                     continue
                 else: size_idx.append(i)
             print('{}/{} bboxes are valid after size filtering'.format(len(size_idx), boxes_filt.size(0)))
             boxes_filt = boxes_filt[size_idx]
-            pred_phrases_unaligned = [pred_phrases_unaligned[idx] for idx in size_idx]
             pred_phrases_set = [pred_phrases_set[idx] for idx in size_idx]
 
-            transformed_boxes = predictor.transform.apply_boxes_torch(boxes_filt, image.shape[:2]).to(device)
-            if transformed_boxes.size(0) == 0:
-                continue
-            
             # Update good prompts in adjacent frames
             good_prompts = [prompt for prompt in extract_good_prompts(valid_tags, pred_phrases_set) if prompt in ram_tags]
             prev_detected_prompts.append(
                 {'frame':frame_idx,"good_prompts":good_prompts}
             )
             
-            if args.reverse_prediction: # load from forward result
-                forward_res_dir = os.path.join(scene_dir, 'prediction_forward', '{}_label.json'.format(img_name))
-                if os.path.exists(forward_res_dir):
-                    good_prompts = [prompt for prompt in read_tags_jsonfile(forward_res_dir) if prompt in ram_tags]
-                    future_detected_prompts.append(
-                        {'frame':frame_idx,"good_prompts": good_prompts}
-                    )
-                # print('save {} forward result:{}'.format(forward_res_dir,read_tags_jsonfile(forward_res_dir)))
-            
-            # print('save prompts:{}'.format(prev_detected_prompts))
+            # if frame_idx % args.frame_gap != 0:
+            #     continue
+          
+            # run SAM
+            image = cv2.imread(image_path)
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)              
+            if args.run_sam:
+                predictor.set_image(image)
+                
+                transformed_boxes = predictor.transform.apply_boxes_torch(boxes_filt, image.shape[:2]).to(device)
+                if transformed_boxes.size(0) == 0:
+                    continue            
+                masks, _, _ = predictor.predict_torch(
+                    point_coords = None,
+                    point_labels = None,
+                    boxes = transformed_boxes.to(device),
+                    multimask_output = False,
+                )
+                t_sam = time.time() - t_start - t_ram - t_grounding
+            else:
+                masks = None
+                t_sam = 0
 
-            if frame_idx % args.frame_gap != 0:
-                continue
-            
-            masks, _, _ = predictor.predict_torch(
-                point_coords = None,
-                point_labels = None,
-                boxes = transformed_boxes.to(device),
-                multimask_output = False,
-            )
-            t_sam = time.time() - t_start - t_ram - t_grounding
             t_total = time.time() - t_start
             print('RAM:{:.2f}s, Grounding:{:.2f}s, SAM:{:.2f}s, total:{:.2f}s'.format(
                 t_ram, t_grounding, t_sam, t_total))
             ram_time.append(t_ram)
             dino_time.append(t_grounding)
-            sam_time.append(t_sam)
             total_time.append(t_total)
+            sam_time.append(t_sam)
             frame_numer +=1
 
             # draw output image
-            plt.figure(figsize=(10, 10))
-            plt.imshow(image)
-            for mask in masks:
-                show_mask(mask.cpu().numpy(), plt.gca(), random_color=True)
-                
-            if args.unaligned_phrases:
-                phrases_to_save = pred_phrases_unaligned
-                # for box, label in zip(boxes_filt, pred_phrases_unaligned):
-                #     show_box(box.numpy(), plt.gca(), label)
-            else: # aligned prompts
-                phrases_to_save = pred_phrases_set
-                
-            for box, token_map in zip(boxes_filt, phrases_to_save):
-                show_box_tokens(box.numpy(), plt.gca(), token_map)
+            if args.save_viz:
+                plt.figure(figsize=(10, 10))
+                plt.imshow(image)                
+                for box, token_map in zip(boxes_filt, pred_phrases_set):
+                    show_box_tokens(box.numpy(), plt.gca(), token_map)
                     
-            plt.title('RAM-tags:' + ram_tags + '\n' + 'filter tags:'+valid_tags+'\n') # + 'RAM-tags_chineseing: ' + tags_chinese + '\n')
-            plt.axis('off')
-            plt.savefig(
-                os.path.join(output_dir, "{}_det.jpg".format(img_name)), 
-                bbox_inches="tight", dpi=300, pad_inches=0.0
-            )
+                if args.run_sam:
+                    for mask in masks:
+                        show_mask(mask.cpu().numpy(), plt.gca(), random_color=True)
+                                        
+                plt.title('RAM-tags:' + ram_tags + '\n' + 'filter tags:'+valid_tags+'\n') # + 'RAM-tags_chineseing: ' + tags_chinese + '\n')
+                plt.axis('off')
+                plt.savefig(
+                    os.path.join(output_dir, "{}_det.jpg".format(img_name)), 
+                    bbox_inches="tight", dpi=300, pad_inches=0.0
+                )
 
-            save_mask_data(output_dir, img_name, ram_tags, valid_tags, masks, boxes_filt, phrases_to_save, mapper)
-            
+            save_mask_data(output_dir, img_name, ram_tags, valid_tags, boxes_filt, pred_phrases_set, masks)
             # break
 
         print('--finished {}'.format(scan))
         # break
-        
+       
+    exit(0) 
     # Summarize time
     ram_time = np.array(ram_time)
     dino_time = np.array(dino_time)

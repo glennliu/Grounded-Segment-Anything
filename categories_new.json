@@ -1,6 +1,8 @@
 {
     "note":"Map the nyu object name to a list of openset objects.",
-    "objects":{
+    "others": ["television","computer monitor","printer","pillar","stair","elevator","ceiling","light","mirror","whiteboard","plant","glass wall","balustrade","robot"],
+    "objects":
+    {
         "wall":{
             "main":["wall","tile wall"],
             "other":[]
@@ -10,7 +12,7 @@
             "other":[]
         },
         "cabinet":{
-            "main":["cabinet","cupboard","wardrobe","file cabinet","closet"],
+            "main":["cabinet","cupboard","wardrobe","file cabinet"],
             "other":[]
         },
         "bed":{
@@ -86,9 +88,9 @@
             "other":[]
         },
         "unknown":{
-            "main":["television","computer monitor","printer","pillar","stairs","elevator"],
+            "main":["television"],
             "other":[]
         }
-
     }
+
 }

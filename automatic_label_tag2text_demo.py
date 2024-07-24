@@ -7,6 +7,7 @@ import json
 import torch
 import torchvision
 from PIL import Image, ImageDraw, ImageFont
+import litellm
 
 # Grounding DINO
 import GroundingDINO.groundingdino.datasets.transforms as T
@@ -22,10 +23,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # Tag2Text
-import sys
-sys.path.append('Tag2Text')
-from Tag2Text.models import tag2text
-from Tag2Text import inference_tag2text
+from ram.models import tag2text_caption
+from ram import inference_tag2text
 import torchvision.transforms as TS
 
 # ChatGPT or nltk is required when using captions
@@ -69,7 +68,7 @@ def generate_tags(caption, split=',', max_tokens=100, model="gpt-3.5-turbo"):
                            f'Caption: {caption}.'
             }
         ]
-        response = openai.ChatCompletion.create(model=model, messages=prompt, temperature=0.6, max_tokens=max_tokens)
+        response = litellm.completion(model=model, messages=prompt, temperature=0.6, max_tokens=max_tokens)
         reply = response['choices'][0]['message']['content']
         # sometimes return with "noun: xxx, xxx, xxx"
         tags = reply.split(':')[-1].strip()
@@ -99,7 +98,7 @@ def check_caption(caption, pred_phrases, max_tokens=100, model="gpt-3.5-turbo"):
                            'Only give the revised caption: '
             }
         ]
-        response = openai.ChatCompletion.create(model=model, messages=prompt, temperature=0.6, max_tokens=max_tokens)
+        response = litellm.completion(model=model, messages=prompt, temperature=0.6, max_tokens=max_tokens)
         reply = response['choices'][0]['message']['content']
         # sometimes return with "Caption: xxx, xxx, xxx"
         caption = reply.split(':')[-1].strip()
@@ -274,7 +273,7 @@ if __name__ == "__main__":
 
     specified_tags='None'
     # load model
-    tag2text_model = tag2text.tag2text_caption(pretrained=tag2text_checkpoint,
+    tag2text_model = tag2text_caption(pretrained=tag2text_checkpoint,
                                         image_size=384,
                                         vit='swin_b',
                                         delete_tag_index=delete_tag_index)
@@ -288,7 +287,7 @@ if __name__ == "__main__":
                     (384, 384))
     raw_image  = transform(raw_image).unsqueeze(0).to(device)
 
-    res = inference_tag2text.inference(raw_image , tag2text_model, specified_tags)
+    res = inference_tag2text(raw_image , tag2text_model, specified_tags)
 
     # Currently ", " is better for detecting single tags
     # while ". " is a little worse in some case

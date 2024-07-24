@@ -16,9 +16,10 @@ from GroundingDINO.groundingdino.util.utils import clean_state_dict, get_phrases
 
 # segment anything
 from segment_anything import (
-    build_sam,
-    build_sam_hq,
-    SamPredictor
+    sam_model_registry,
+    sam_hq_model_registry,
+    SamPredictor,
+    build_sam
 )
 import cv2
 import numpy as np
@@ -153,8 +154,8 @@ def show_mask(mask, ax, random_color=False):
 def show_box(box, ax, label):
     x0, y0 = box[0], box[1]
     w, h = box[2] - box[0], box[3] - box[1]
-    ax.add_patch(plt.Rectangle((x0, y0), w, h, edgecolor='green', facecolor=(0,0,0,0), lw=2)) 
-    ax.text(x0, y0, label, bbox=dict(facecolor='green', alpha=0.5), fontsize=20, color='white')
+    ax.add_patch(plt.Rectangle((x0, y0), w, h, edgecolor='green', facecolor=(0,0,0,0), lw=2))
+    ax.text(x0, y0, label)
 
 
 def save_mask_data(output_dir, mask_list, box_list, label_list):
@@ -184,7 +185,7 @@ def save_mask_data(output_dir, mask_list, box_list, label_list):
         })
     with open(os.path.join(output_dir, 'mask.json'), 'w') as f:
         json.dump(json_data, f)
-    
+
 
 if __name__ == "__main__":
 
@@ -192,6 +193,9 @@ if __name__ == "__main__":
     parser.add_argument("--config", type=str, required=True, help="path to config file")
     parser.add_argument(
         "--grounded_checkpoint", type=str, required=True, help="path to checkpoint file"
+    )
+    parser.add_argument(
+        "--sam_version", type=str, default="vit_h", required=False, help="SAM ViT version: vit_b / vit_l / vit_h"
     )
     parser.add_argument(
         "--sam_checkpoint", type=str, required=False, help="path to sam checkpoint file"
@@ -218,6 +222,7 @@ if __name__ == "__main__":
     # cfg
     config_file = args.config  # change the path of the model config file
     grounded_checkpoint = args.grounded_checkpoint  # change the path of the model
+    sam_version = args.sam_version
     sam_checkpoint = args.sam_checkpoint
     sam_hq_checkpoint = args.sam_hq_checkpoint
     use_sam_hq = args.use_sam_hq
@@ -245,7 +250,7 @@ if __name__ == "__main__":
 
     # initialize SAM
     if use_sam_hq:
-        predictor = SamPredictor(build_sam_hq(checkpoint=sam_hq_checkpoint).to(device))
+        predictor = SamPredictor(sam_hq_model_registry[sam_version](checkpoint=sam_hq_checkpoint).to(device))
     else:
         predictor = SamPredictor(build_sam(checkpoint=sam_checkpoint).to(device))
             
@@ -290,7 +295,8 @@ if __name__ == "__main__":
         # pred_phrases_unaligned = [pred_phrases_unaligned[idx] for idx in nms_idx]
         # pred_phrases_set = [pred_phrases_set[idx] for idx in nms_idx]
         print('After NMS, {}/{} bbox are valid'.format(len(nms_idx), tmp_count_bbox))
-        
+        if len(nms_idx)<1:
+            continue
         
         transformed_boxes = predictor.transform.apply_boxes_torch(boxes_filt, image.shape[:2]).to(device)
 
