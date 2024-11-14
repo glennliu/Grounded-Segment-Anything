@@ -1,6 +1,6 @@
 {
     "note":"Map the nyu object name to a list of openset objects.",
-    "others": ["television","computer monitor","printer","pillar","stair","elevator","ceiling","light","mirror","whiteboard","plant","glass wall","balustrade","robot"],
+    "others": ["television","computer monitor","printer","pillar","stair","ceiling","light","mirror","whiteboard","plant","glass wall","balustrade","robot","lego","locker","sculpture","sign","elevator"],
     "objects":
     {
         "wall":{

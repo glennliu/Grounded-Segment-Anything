@@ -8,6 +8,7 @@ def read_category(category_file):
     with open(category_file, 'r') as f:
         data = json.load(f)
         objects = data['objects']
+        others = data['others']
         for rootname,data in objects.items():
             openset_obj = data["main"]
             for ele in openset_obj:
@@ -16,9 +17,12 @@ def read_category(category_file):
             if 'composite' in data:
                 for pair in data['composite']:
                     composite_pairs[pair[0]] = [pair[1],rootname]
-                    
+        
+        for category in others:
+            mapper[category] = category
             
         f.close()
+        # print(mapper.keys())
         return root_category, mapper, composite_pairs
     
 if __name__=='__main__':

@@ -94,7 +94,7 @@ def main(args):
 
     # Build GroundingDINO Model
     groundingdino_config = "GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py"
-    groundingdino_ckpt_path = "./groundingdino_swint_ogc.pth"
+    groundingdino_ckpt_path = "./checkpoints/groundingdino_swint_ogc.pth" #"./groundingdino_swint_ogc.pth"
 
     image_source, image = load_image(img_path)
     model = load_model(groundingdino_config, groundingdino_ckpt_path)

@@ -4,12 +4,17 @@
 This is a modified version of [RAM-Grounded-SAM](https://github.com/IDEA-Research/Grounded-Segment-Anything). It is modified to run it on an image sequence from SLAM dataset (eg. ScanNet sequence.). The main modifications are,
 - Text prompt augmentation. The recently detected labels are recorded and augmented into the text prompt send to GroundingDINO. 
 - In GroundingDINO, all the grounded phrases are decoded seperatedly into label measurements. The corresponding similarity score for each label are also meaintained. 
+- Fiter the bounding boxes according to its coverage.
 - Program interfaces are provided, such as ```frame_gap```, ```split_file``` etc. 
+- Filter ambigous tags from RAM, such as ```hallway```, ```office``` etc.
 
-To segment an image sequence, 
+To run RAM-Grounded-SAM for a list of RGB sequences, 
+```bash
+python run_ram_ground_sam.py --ram_checkpoint ${RAM_PTH} --grounded_checkpoint ${GROUND_DINO_PTH} --dataroot ${DATA_ROOT_DIR} --split_file val.txt
 ```
-sh ram_demo_no_aug.sh val val_tmp.txt
-```
+Please set the ```PARAMETERS``` accordingly before run the command above.
+
+```run_ram_ground_sam.py``` read the RGB sequence following our dataset structure. The organized data structure is explained [here](https://github.com/HKUST-Aerial-Robotics/FM-Fusion/blob/master/doc/DATA.md).
 
 # Grounded-Segment-Anything
 [![YouTube](https://badges.aleen42.com/src/youtube.svg)](https://youtu.be/oEQYStnF2l8) [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/roboflow-ai/notebooks/blob/main/notebooks/automated-dataset-annotation-and-evaluation-with-grounding-dino-and-sam.ipynb) [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://github.com/camenduru/grounded-segment-anything-colab) [![HuggingFace Space](https://img.shields.io/badge/🤗-HuggingFace%20Space-cyan.svg)](https://huggingface.co/spaces/IDEA-Research/Grounded-SAM) [![Replicate](https://replicate.com/cjwbw/grounded-recognize-anything/badge)](https://replicate.com/cjwbw/grounded-recognize-anything)  [![ModelScope Official Demo](https://img.shields.io/badge/ModelScope-Official%20Demo-important)](https://modelscope.cn/studios/tuofeilunhifi/Grounded-Segment-Anything/summary) [![Huggingface Demo by Community](https://img.shields.io/badge/Huggingface-Demo%20by%20Community-red)](https://huggingface.co/spaces/yizhangliu/Grounded-Segment-Anything) [![Stable-Diffusion WebUI](https://img.shields.io/badge/Stable--Diffusion-WebUI%20by%20Community-critical)](https://github.com/continue-revolution/sd-webui-segment-anything) [![Jupyter Notebook Demo](https://img.shields.io/badge/Demo-Jupyter%20Notebook-informational)](./grounded_sam.ipynb)

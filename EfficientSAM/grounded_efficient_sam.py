@@ -12,13 +12,15 @@ DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # GroundingDINO config and checkpoint
 GROUNDING_DINO_CONFIG_PATH = "GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py"
-GROUNDING_DINO_CHECKPOINT_PATH = "./groundingdino_swint_ogc.pth"
+GROUNDING_DINO_CONFIG_PATH = "/home/cliuci/code_ws/Grounded-Segment-Anything/GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py"
+GROUNDING_DINO_CHECKPOINT_PATH = "/home/cliuci/code_ws/Grounded-Segment-Anything/checkpoints/groundingdino_swint_ogc.pth"
 
 # Building GroundingDINO inference model
 grounding_dino_model = Model(model_config_path=GROUNDING_DINO_CONFIG_PATH, model_checkpoint_path=GROUNDING_DINO_CHECKPOINT_PATH)
 
 # Building MobileSAM predictor
 EFFICIENT_SAM_CHECHPOINT_PATH = "./EfficientSAM/efficientsam_s_gpu.jit"
+EFFICIENT_SAM_CHECHPOINT_PATH = "/home/cliuci/code_ws/Grounded-Segment-Anything/checkpoints/efficient_sam_vits.pt"
 efficientsam = torch.jit.load(EFFICIENT_SAM_CHECHPOINT_PATH)
 
 

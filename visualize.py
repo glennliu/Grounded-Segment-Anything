@@ -110,9 +110,9 @@ def load_pred(label_file,valid_openset_names=None):
 
 if __name__=='__main__':
     # dataroot = '/data2/3rscan_raw'
-    dataroot = '/data2/bim'
+    dataroot = '/data2/ScanNet'
     output_folder  = os.path.join(dataroot,'viz')
-    scans_folder = os.path.join(dataroot,'scans')
+    scans_folder = os.path.join(dataroot,'val')
     if '3rscan' in dataroot:
         rgb_folder = 'sequence' # color
         rgb_posfix = '.color.jpg'  #'.jpg'
@@ -126,25 +126,18 @@ if __name__=='__main__':
         scans_folder = os.path.join(dataroot, 'test')
     else:
         rgb_folder = 'color'
-        rgb_folder = '.jpg'
+        rgb_posfix = '.jpg'
     frame_gap = 10
     sample_frame_number = 100000
-    split_file = 'test.txt'
+    split_file = 'tmp.txt'
     visualize_mask = False
     
     ### original prediction are based on rotated rgb ###
     prediction_folder = 'prediction_no_augment'
     rotated = False
-    tmp_scan_list = [
-        '280d8ebb-6cc6-2788-9153-98959a2da801',
-        '4731976c-f9f7-2a1a-95cc-31c4d1751d0b',
-        '1d2f850c-d757-207c-8fba-60b90a7d4691',
-        'ea318260-0a4c-2749-9389-4c16c782c4b1',
-        '10b17957-3938-2467-88a5-9e9254930dad',
-    ]
     
     scans = read_scan_list(os.path.join(dataroot, 'splits', split_file))
-    
+    scans = ['scene0064_00']
     
     pred_folders = [os.path.join(scans_folder, scan, prediction_folder) for scan in scans]
     # pred_folders = glob.glob(os.path.join(scans_folder, '*', prediction_folder))
@@ -152,10 +145,12 @@ if __name__=='__main__':
 
     for pred_folder in pred_folders:
         scene = pred_folder.split('/')[-2]
-        # scene_viz_folder = os.path.join(output_folder, scene)
+        all_viz_folder = os.path.join(output_folder, scene)
         scene_viz_folder = os.path.join(scans_folder, scene, 'pred_viz')
         if os.path.exists(scene_viz_folder)==False:
             os.makedirs(scene_viz_folder)
+        if os.path.exists(all_viz_folder)==False:
+            os.makedirs(all_viz_folder)
 
         # if os.path.exists(scene_viz_folder): continue
         if 'lg' in scene: continue
@@ -168,23 +163,24 @@ if __name__=='__main__':
             sample_pred_files = np.random.choice(pred_files, sample_frame_number, replace=False)
         count = 0
         for frame_pred in sorted(sample_pred_files):
+            print(frame_pred)
             frame_name = frame_pred.split('/')[-1][:12]
             frame_id = int(frame_name[6:])
             if count % 50==0:
                 print('{} / {}'.format(frame_name, len(sample_pred_files)))
+                
+            boxes, semantics, tags = load_pred(frame_pred)
+            color_file = os.path.join(scans_folder, scene, rgb_folder, frame_name+rgb_posfix)
+            rgb = cv2.imread(color_file)
+            if rotated:
+                rgb = cv2.rotate(rgb, cv2.ROTATE_90_CLOCKWISE)            
+                
             if True:
                 # print(frame_name)
+                rgb = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)
                 if os.path.exists(scene_viz_folder) == False:
                     os.makedirs(scene_viz_folder)
-                
-                color_file = os.path.join(scans_folder, scene, rgb_folder, frame_name+rgb_posfix)
-                rgb = cv2.imread(color_file)
-                rgb = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)
-                if rotated:
-                    rgb = cv2.rotate(rgb, cv2.ROTATE_90_CLOCKWISE)
-                
-                boxes, semantics, tags = load_pred(frame_pred)
-                
+
                 for box, semantic_label_dict in zip(boxes, semantics):
                     label = list(semantic_label_dict.keys())[0]
                     score = semantic_label_dict[label]       
@@ -198,7 +194,8 @@ if __name__=='__main__':
                 cv2.imwrite(os.path.join(scene_viz_folder, frame_name+'.jpg'), rgb)
                 
                 count +=1
-                continue
+            else:
+                # continue
                 if len(boxes)<1:continue
                 plt.figure(figsize=(10, 10))
                 plt.imshow(rgb)        
@@ -215,9 +212,9 @@ if __name__=='__main__':
                         show_mask(mask_i, plt.gca(), random_color=True)
                 
                 plt.title(tags)
-                plt.savefig(os.path.join(scene_viz_folder, frame_name+'.jpg'))
+                plt.savefig(os.path.join(all_viz_folder, frame_name+'.jpg'))
                 count +=1
-                break
+            # break
         # break
         print('{} saved {} frames'.format(scene, count))
         # break
