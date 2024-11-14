@@ -56,6 +56,7 @@ class GroundingDINO(nn.Module):
         backbone,
         transformer,
         num_queries,
+        bert_base_uncased_path,
         aux_loss=False,
         iter_update=False,
         query_dim=2,
@@ -104,8 +105,8 @@ class GroundingDINO(nn.Module):
         self.dn_labelbook_size = dn_labelbook_size
 
         # bert
-        self.tokenizer = get_tokenlizer.get_tokenlizer(text_encoder_type)
-        self.bert = get_tokenlizer.get_pretrained_language_model(text_encoder_type)
+        self.tokenizer = get_tokenlizer.get_tokenlizer(text_encoder_type, bert_base_uncased_path)
+        self.bert = get_tokenlizer.get_pretrained_language_model(text_encoder_type, bert_base_uncased_path)
         self.bert.pooler.dense.weight.requires_grad_(False)
         self.bert.pooler.dense.bias.requires_grad_(False)
         self.bert = BertModelWarper(bert_model=self.bert)
@@ -368,11 +369,13 @@ def build_groundingdino(args):
     dn_labelbook_size = args.dn_labelbook_size
     dec_pred_bbox_embed_share = args.dec_pred_bbox_embed_share
     sub_sentence_present = args.sub_sentence_present
+    bert_base_uncased_path = args.bert_base_uncased_path if 'bert_base_uncased_path' in args else None
 
     model = GroundingDINO(
         backbone,
         transformer,
-        num_queries=args.num_queries,
+        num_queries=args.num_queries,        
+        bert_base_uncased_path=bert_base_uncased_path,
         aux_loss=True,
         iter_update=True,
         query_dim=4,

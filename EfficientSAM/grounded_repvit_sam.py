@@ -7,7 +7,7 @@ import torchvision
 
 from groundingdino.util.inference import Model
 from segment_anything import SamPredictor
-from LightHQSAM.setup_light_hqsam import setup_model
+from RepViTSAM.setup_repvit_sam import build_sam_repvit
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -19,13 +19,11 @@ GROUNDING_DINO_CHECKPOINT_PATH = "./groundingdino_swint_ogc.pth"
 grounding_dino_model = Model(model_config_path=GROUNDING_DINO_CONFIG_PATH, model_checkpoint_path=GROUNDING_DINO_CHECKPOINT_PATH)
 
 # Building MobileSAM predictor
-HQSAM_CHECKPOINT_PATH = "./EfficientSAM/sam_hq_vit_tiny.pth"
-checkpoint = torch.load(HQSAM_CHECKPOINT_PATH)
-light_hqsam = setup_model()
-light_hqsam.load_state_dict(checkpoint, strict=True)
-light_hqsam.to(device=DEVICE)
+RepViTSAM_CHECKPOINT_PATH = "./EfficientSAM/repvit_sam.pt"
+repvit_sam = build_sam_repvit(checkpoint=RepViTSAM_CHECKPOINT_PATH)
+repvit_sam.to(device=DEVICE)
 
-sam_predictor = SamPredictor(light_hqsam)
+sam_predictor = SamPredictor(repvit_sam)
 
 
 # Predict classes and hyper-param for GroundingDINO
@@ -51,7 +49,7 @@ detections = grounding_dino_model.predict_with_classes(
 box_annotator = sv.BoxAnnotator()
 labels = [
     f"{CLASSES[class_id]} {confidence:0.2f}" 
-    for _, _, confidence, class_id, _, _
+    for _, _, confidence, class_id, _, _ 
     in detections]
 annotated_frame = box_annotator.annotate(scene=image.copy(), detections=detections, labels=labels)
 
@@ -100,10 +98,10 @@ box_annotator = sv.BoxAnnotator()
 mask_annotator = sv.MaskAnnotator()
 labels = [
     f"{CLASSES[class_id]} {confidence:0.2f}" 
-    for _, _, confidence, class_id, _, _
+    for _, _, confidence, class_id, _, _ 
     in detections]
 annotated_image = mask_annotator.annotate(scene=image.copy(), detections=detections)
 annotated_image = box_annotator.annotate(scene=annotated_image, detections=detections, labels=labels)
 
 # save the annotated grounded-sam image
-cv2.imwrite("EfficientSAM/LightHQSAM/grounded_light_hqsam_annotated_image.jpg", annotated_image)
+cv2.imwrite("EfficientSAM/grounded_repvit_sam_annotated_image.jpg", annotated_image)
